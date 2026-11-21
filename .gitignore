@@ -1,0 +1,15 @@
+# Builds (downloads live in GitHub Releases)
+dist/
+mac/build/
+mac/PadLink.xcodeproj/
+android/.gradle/
+android/.kotlin/
+android/build/
+android/app/build/
+android/local.properties
+# Local tooling
+.claude-flow/
+.idea/
+.DS_Store
+*.keystore
+*.jks

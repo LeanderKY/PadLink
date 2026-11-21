@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Blue circle with a white pen nib. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <path android:fillColor="#3D7AFA"
+        android:pathData="M54,6a48,48 0,1 1,0 96a48,48 0,1 1,0 -96z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M54,26 L70,58 L62,78 L46,78 L38,58 Z" />
+    <path android:fillColor="#3D7AFA"
+        android:pathData="M54,46a5,5 0,1 1,0 10a5,5 0,1 1,0 -10z M52.5,30 L55.5,30 L55.5,47 L52.5,47 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M44,81 L64,81 L64,86 L44,86 Z" />
+</vector>
