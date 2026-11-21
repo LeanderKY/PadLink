@@ -6,8 +6,7 @@
 | **Mac** | [PadLink-Mac.zip](https://github.com/LeanderKY/PadLink/releases/latest/download/PadLink-Mac.zip) – entpacken, `PadLink.app` in *Programme* ziehen |
 | **Pad (Android)** | [PadLink.apk](https://github.com/LeanderKY/PadLink/releases/latest/download/PadLink.apk) – auf dem Pad öffnen, „Installieren“ |
 
-Alle Versionen: [Releases](https://github.com/LeanderKY/PadLink/releases). Das Repo ist privat – zum Herunterladen
-muss man bei GitHub angemeldet sein (auch auf dem Pad im Browser).
+Download-Seite: **[leanderky.github.io/PadLink](https://leanderky.github.io/PadLink/)** · alle Versionen: [Releases](https://github.com/LeanderKY/PadLink/releases)
 
 Ein großer Knopf am Mac → das Bild erscheint auf dem Pad, und der Stift malt in Photoshop (mit Druckstärke
 und Neigung). Kein Kabel. Nur beim allerersten Mal wird gekoppelt („Erlauben“ auf dem Pad).
