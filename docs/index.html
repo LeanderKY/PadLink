@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>PadLink</title>
+<link rel="icon" href="icon.png">
+<style>
+  :root {
+    --bg: #f4f5f7; --card: #ffffff; --ink: #16181d; --muted: #6b7280; --line: #e5e7eb;
+    --accent: #3d7afa; --accent-ink: #ffffff; --soft: #eef3ff;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111317; --card: #1a1d23; --ink: #f2f3f5; --muted: #9aa1ad; --line: #2a2e36; --soft: #1e2a44; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 16px 64px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header img { width: 96px; height: 96px; border-radius: 22px; box-shadow: 0 8px 24px rgba(61,122,250,.25); }
+  h1 { font-size: 34px; letter-spacing: -.02em; margin: 18px 0 6px; }
+  header p { color: var(--muted); margin: 0; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 24px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .card h2 { font-size: 20px; margin: 0; }
+  .card .sub { color: var(--muted); font-size: 14px; margin: -8px 0 0; }
+  ol { margin: 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ol li { margin: 4px 0; }
+  .btn {
+    display: block; text-align: center; text-decoration: none; font-weight: 600; font-size: 17px;
+    background: var(--accent); color: var(--accent-ink); padding: 14px 18px; border-radius: 999px;
+    margin-top: auto; transition: transform .08s ease, filter .15s ease;
+  }
+  .btn:hover { filter: brightness(1.06); }
+  .btn:active { transform: scale(.98); }
+  .note {
+    margin-top: 24px; background: var(--soft); border-radius: 16px; padding: 16px 18px;
+    font-size: 14px; color: var(--muted);
+  }
+  .note strong { color: var(--ink); }
+  footer { text-align: center; margin-top: 32px; font-size: 13px; color: var(--muted); }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.png" alt="">
+    <h1>PadLink</h1>
+    <p>Mac-Bildschirm und Stift auf dem Wacom MovinkPad Pro 14</p>
+  </header>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Für den Mac</h2>
+      <p class="sub">macOS 14 oder neuer</p>
+      <ol>
+        <li>Herunterladen und entpacken</li>
+        <li><b>PadLink</b> in <i>Programme</i> ziehen</li>
+        <li>Einmal Rechtsklick → Öffnen, dann zwei Erlaubnisse geben</li>
+      </ol>
+      <a class="btn" href="https://github.com/LeanderKY/PadLink/releases/latest/download/PadLink-Mac.zip">Mac-App laden</a>
+    </section>
+
+    <section class="card">
+      <h2>Für das Pad</h2>
+      <p class="sub">Android, auf dem Pad öffnen</p>
+      <ol>
+        <li>Auf dem Pad herunterladen</li>
+        <li>Datei antippen → <b>Installieren</b></li>
+        <li>PadLink öffnen, am Mac den großen Knopf drücken</li>
+      </ol>
+      <a class="btn" href="https://github.com/LeanderKY/PadLink/releases/latest/download/PadLink.apk">Pad-App laden</a>
+    </section>
+  </div>
+
+  <p class="note">
+    <strong>Mit Kabel</strong> ist die Verzögerung am kleinsten: Pad per USB-C an den Mac, dann den Knopf drücken.
+    Ohne Kabel müssen Mac und Pad im gleichen WLAN sein.<br><br>
+    Die Downloads sind privat – vorher bei GitHub anmelden.
+  </p>
+
+  <footer>
+    <a href="https://github.com/LeanderKY/PadLink/releases">Alle Versionen</a>
+  </footer>
+</main>
+</body>
+</html>
