@@ -132,6 +132,7 @@ struct StatusText: View {
                 }
                 .font(.system(size: 13).monospacedDigit())
                 .foregroundStyle(.secondary)
+                if !model.viaCable && !model.cableReport.isEmpty { CableDetails(text: model.cableReport) }
             case .problem(let msg):
                 title("Hat nicht geklappt")
                 subtitle(msg)

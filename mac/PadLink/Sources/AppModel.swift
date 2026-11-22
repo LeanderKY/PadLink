@@ -111,10 +111,14 @@ final class AppModel: ObservableObject {
             guard my == attempt, phase == .searching || isCableConnecting else { if let usb { IOObjectRelease(usb) }; return }
             if let usb { openUSB(usb) }
             else if kick { phase = .problem(Self.cableStuck) }
+            else if UsbScanner.lastBlocked { phase = .problem(Self.cableBlocked) }
+            // The pad is on the cable but didn't switch over: say so (with details) instead of quietly using Wi‑Fi.
+            else if UsbScanner.lastSawPad { phase = .problem(Self.cableStuck) }
             else { viaCable = false; phase = .searching; searchWifi() }
         }
     }
 
+    private static let cableBlocked = "macOS lässt das Pad am Kabel noch nicht zu.\nKabel kurz aus- und wieder einstecken und am Mac „Erlauben“ klicken. (Oder: Systemeinstellungen → Datenschutz & Sicherheit → „Verbindung von Zubehör erlauben“.)"
     private static let cableStuck = "Das Pad am Kabel antwortet nicht.\nPad entsperren, PadLink darauf öffnen – dann nochmal drücken."
 
     private var isCableConnecting: Bool {

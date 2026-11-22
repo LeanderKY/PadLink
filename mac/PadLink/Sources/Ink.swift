@@ -8,7 +8,7 @@ import CoreVideo
 /// stroke ("inkSeq"), and measure what the stroke looks like (colour, width) so the pad's ink matches.
 /// Nothing is predicted — the pad only ever draws samples the pen really produced.
 final class InkTracker {
-    private struct Sample { let seq: UInt32; let t: UInt64; let x: Float; let y: Float; let down: Bool }
+    private struct Sample { let seq: UInt32; let t: UInt64; let x: Float; let y: Float; let p: Float; let down: Bool }
 
     private let lock = NSLock()
     private var log: [Sample] = []          // last ~1 s of pen samples
@@ -21,7 +21,7 @@ final class InkTracker {
     func record(_ e: PenEvent, at t: UInt64) {
         guard e.seq != 0 else { return }
         lock.lock(); defer { lock.unlock() }
-        log.append(Sample(seq: e.seq, t: t, x: e.x, y: e.y, down: e.isDown))
+        log.append(Sample(seq: e.seq, t: t, x: e.x, y: e.y, p: e.pressure, down: e.isDown))
         lastSeq = max(lastSeq, e.seq)
         if log.count > 600 { log.removeFirst(log.count - 400) }
     }
@@ -40,10 +40,10 @@ final class InkTracker {
 
     /// A recent pen-down point that is surely drawn in the picture captured at `captureNs`
     /// (60–250 ms old), to read the stroke's colour and width from.
-    func probePoint(at captureNs: UInt64) -> (x: Float, y: Float)? {
+    func probePoint(at captureNs: UInt64) -> (x: Float, y: Float, pressure: Float)? {
         lock.lock(); defer { lock.unlock() }
         guard let s = log.last(where: { $0.down && captureNs &- $0.t >= 60_000_000 && captureNs &- $0.t <= 250_000_000 }) else { return nil }
-        return (s.x, s.y)
+        return (s.x, s.y, s.p)
     }
 }
 
@@ -54,15 +54,18 @@ struct InkStyle: Equatable {
     var width: Float
     /// false = nothing is being drawn under the pen (selection, hand tool …) → the pad shows no ink.
     var visible: Bool
+    /// The brush gets thicker with pen pressure (Photoshop "pressure for size"): `width` is then the width at
+    /// full pressure and the pad draws every piece of ink at `width × pressure` — like the real stroke.
+    var pressureScaled = false
 
     func payload() -> Data {
         var w = ByteWriter()
-        w.u8(r); w.u8(g); w.u8(b); w.f32(width); w.u8(visible ? 1 : 0)
+        w.u8(r); w.u8(g); w.u8(b); w.f32(width); w.u8(visible ? 1 : 0); w.u8(pressureScaled ? 1 : 0)
         return w.data
     }
 
     func differs(from o: InkStyle) -> Bool {
-        visible != o.visible || abs(Int(r) - Int(o.r)) + abs(Int(g) - Int(o.g)) + abs(Int(b) - Int(o.b)) > 24
+        visible != o.visible || pressureScaled != o.pressureScaled || abs(Int(r) - Int(o.r)) + abs(Int(g) - Int(o.g)) + abs(Int(b) - Int(o.b)) > 24
             || abs(width - o.width) > max(0.0006, o.width * 0.2)
     }
 
@@ -115,5 +118,34 @@ struct InkStyle: Equatable {
         func clamp(_ v: Double) -> UInt8 { UInt8(max(0, min(255, v.rounded()))) }
         return InkStyle(r: clamp(Yf + 1.793 * V), g: clamp(Yf - 0.213 * U - 0.533 * V), b: clamp(Yf + 2.112 * U),
                         width: Float(max(thinnest, 1)) / Float(w), visible: visible)
+    }
+}
+
+/// Finds out whether the brush's width follows pen pressure, from (pressure, measured width) pairs.
+/// Compares "width = a × pressure" against "width is constant" and picks whichever fits clearly better.
+struct PressureFit {
+    private var pairs: [(p: Float, w: Float)] = []
+    private var color: (Int, Int, Int)?
+
+    mutating func add(_ st: InkStyle, pressure: Float) -> InkStyle {
+        var out = st
+        guard st.visible, pressure > 0.02 else { return out }
+        let c = (Int(st.r), Int(st.g), Int(st.b))
+        if let o = color, abs(o.0 - c.0) + abs(o.1 - c.1) + abs(o.2 - c.2) > 60 { pairs.removeAll() } // other brush/colour
+        color = c
+        pairs.append((pressure, st.width))
+        if pairs.count > 12 { pairs.removeFirst() }
+        let ps = pairs.map(\.p)
+        guard pairs.count >= 4, (ps.max()! - ps.min()!) >= 0.2 else { return out }
+        let spp = pairs.reduce(Float(0)) { $0 + $1.p * $1.p }
+        let a = pairs.reduce(Float(0)) { $0 + $1.p * $1.w } / spp
+        let mean = pairs.reduce(Float(0)) { $0 + $1.w } / Float(pairs.count)
+        let errProp = pairs.reduce(Float(0)) { $0 + pow($1.w - a * $1.p, 2) }
+        let errConst = pairs.reduce(Float(0)) { $0 + pow($1.w - mean, 2) }
+        if errProp < errConst * 0.5 {
+            out.pressureScaled = true
+            out.width = a
+        }
+        return out
     }
 }

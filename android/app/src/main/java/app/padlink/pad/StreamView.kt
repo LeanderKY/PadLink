@@ -82,7 +82,8 @@ class StreamView(context: Context, private val send: (Int, ByteArray) -> Unit) :
 
     // Local ink (see InkView) — called from the network/decoder threads.
     fun confirmInk(seq: Long) = ink.confirm(seq)
-    fun setInkStyle(color: Int, width: Float, visible: Boolean) = ink.setStyle(color, width, visible)
+    fun setInkStyle(color: Int, width: Float, visible: Boolean, pressureScaled: Boolean) =
+        ink.setStyle(color, width, visible, pressureScaled)
     fun resetInk() { ink.clear() }
 
     // ---------- Pen ----------
@@ -164,7 +165,7 @@ class StreamView(context: Context, private val send: (Int, ByteArray) -> Unit) :
 
         // Instant local ink for the drawing end of the pen (not for the eraser, not with the side button).
         if ((action == ACTION_DOWN || action == ACTION_MOVE) && !eraser && !side) {
-            ink.add(x, y, seq, newStroke = strokeStarted)
+            ink.add(x, y, pressure, seq, newStroke = strokeStarted)
             strokeStarted = false
         }
 

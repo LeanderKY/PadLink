@@ -37,6 +37,13 @@ enum UsbScanner {
     /// switch again, which makes Android drop the old accessory connection and open PadLink afresh.
     static func findPad(wait: TimeInterval = 30, kick: Bool = false, onSwitched: (() -> Void)? = nil) -> io_service_t? {
         resetReport()
+        lastSawPad = false
+        lastBlocked = false
+        for port in usbCPorts() {
+            note("Anschluss \(port.name): \(port.connected ? "belegt" : "frei")\(port.connected ? ", Daten: \(port.transports), Freigabe: \(port.auth)" : "")")
+            if port.connected && port.blocked { lastBlocked = true }
+        }
+        if lastBlocked { note("→ macOS hat das Gerät am Kabel noch nicht freigegeben („Zubehör erlauben“)") }
         let ds = devices()
         defer { ds.forEach { IOObjectRelease($0.service) } }
         note(ds.isEmpty ? "Keine USB-Geräte sichtbar (Kabel? Mac fragt evtl. „Zubehör erlauben?“)" : "USB-Geräte am Mac:")
@@ -49,6 +56,7 @@ enum UsbScanner {
         }
         var switched = false
         for d in ds where looksLikeAndroid(d) {
+            lastSawPad = true
             note("Pad-Kandidat: \(d.name.isEmpty ? "?" : d.name)")
             if switchToAccessory(d) { switched = true }
         }
@@ -59,6 +67,34 @@ enum UsbScanner {
     }
 
     // MARK: Diagnosis (shown in the app when the cable doesn't work)
+
+    /// Results of the last `findPad`: something pad-like was on USB / macOS is holding a device back.
+    private(set) static var lastSawPad = false
+    private(set) static var lastBlocked = false
+
+    struct Port { let name: String; let connected: Bool; let transports: String; let auth: String; let blocked: Bool }
+
+    /// The Mac's USB-C ports as the system sees them — including macOS's "allow this accessory?" state, which
+    /// keeps a newly plugged-in device away from every app until someone clicks "Allow".
+    static func usbCPorts() -> [Port] {
+        var out: [Port] = []
+        let match: NSDictionary = ["IOProviderClass": "IOService", "IOPropertyMatch": ["PortTypeDescription": "USB-C"]]
+        var it: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMainPortDefault, match as CFDictionary, &it) == KERN_SUCCESS else { return [] }
+        defer { IOObjectRelease(it) }
+        while case let s = IOIteratorNext(it), s != 0 {
+            defer { IOObjectRelease(s) }
+            func prop(_ k: String) -> Any? { IORegistryEntryCreateCFProperty(s, k as CFString, kCFAllocatorDefault, 0)?.takeRetainedValue() }
+            let connected = (prop("ConnectionActive") as? Bool) ?? false
+            let transports = (prop("TransportsProvisioned") as? [String])?.joined(separator: "+") ?? "?"
+            let required = (prop("AuthorizationRequired") as? Bool) ?? false
+            let auth = (prop("UserAuthorizationStatusDescription") as? String) ?? "?"
+            let ok = ["not required", "authorized", "allowed", "approved"].contains { auth.lowercased().contains($0) }
+            out.append(Port(name: (prop("PortDescription") as? String) ?? "USB-C", connected: connected,
+                            transports: transports, auth: auth, blocked: required && !ok))
+        }
+        return out
+    }
 
     private static let reportLock = NSLock()
     private static var reportLines: [String] = []

@@ -65,6 +65,7 @@ final class StreamSession {
     private var inkFifo: [UInt32] = []
     private var lastStyle: InkStyle?          // capture queue
     private var lastStyleNs: UInt64 = 0       // capture queue
+    private var pressureFit = PressureFit()   // capture queue
     private var inkTimer: DispatchSourceTimer?
 
     // Pen over UDP (Wi‑Fi only): no TCP head-of-line stalls when a packet is lost. Samples also come over
@@ -347,7 +348,8 @@ final class StreamSession {
     /// Capture queue: tell the pad what the stroke looks like, so its instant ink matches the real brush.
     private func measureInk(_ pb: CVPixelBuffer, _ captureNs: UInt64) {
         guard captureNs &- lastStyleNs > 80_000_000, let p = ink.probePoint(at: captureNs),
-              let st = InkStyle.measure(pb, x: p.x, y: p.y) else { return }
+              let measured = InkStyle.measure(pb, x: p.x, y: p.y) else { return }
+        let st = pressureFit.add(measured, pressure: p.pressure)
         lastStyleNs = captureNs
         if let old = lastStyle, !st.differs(from: old) { return }
         lastStyle = st

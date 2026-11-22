@@ -20,7 +20,7 @@ import android.view.View
  */
 class InkView(context: Context) : View(context) {
 
-    private class Pt(val x: Float, val y: Float, val seq: Long, val t: Long, val stroke: Int)
+    private class Pt(val x: Float, val y: Float, val p: Float, val seq: Long, val t: Long, val stroke: Int)
 
     private val pts = ArrayList<Pt>()       // guarded by `this`
     private var confirmed = 0L
@@ -28,6 +28,8 @@ class InkView(context: Context) : View(context) {
     private var visibleOnMac = false
     private var color = Color.DKGRAY
     private var widthNorm = 0.002f
+    /** The brush follows pen pressure (measured on the Mac): width = widthNorm × pressure per piece. */
+    private var pressureScaled = false
     private var strokeId = 0
 
     /** Width of the picture on the pad in px (ink width is relative to it). */
@@ -43,10 +45,10 @@ class InkView(context: Context) : View(context) {
     init { setWillNotDraw(false) }
 
     /** UI thread, for every pen sample while the tip touches. */
-    fun add(x: Float, y: Float, seq: Long, newStroke: Boolean) {
+    fun add(x: Float, y: Float, pressure: Float, seq: Long, newStroke: Boolean) {
         synchronized(this) {
             if (newStroke) strokeId++
-            if (seq > confirmed) pts.add(Pt(x, y, seq, SystemClock.uptimeMillis(), strokeId))
+            if (seq > confirmed) pts.add(Pt(x, y, pressure, seq, SystemClock.uptimeMillis(), strokeId))
         }
         invalidate()
     }
@@ -69,11 +71,11 @@ class InkView(context: Context) : View(context) {
         postInvalidateOnAnimation()
     }
 
-    fun setStyle(c: Int, width: Float, visible: Boolean) {
+    fun setStyle(c: Int, width: Float, visible: Boolean, pressureScaled: Boolean) {
         synchronized(this) {
             styleKnown = true
             visibleOnMac = visible
-            if (visible) { color = c; if (width > 0f) widthNorm = width }
+            if (visible) { color = c; if (width > 0f) widthNorm = width; this.pressureScaled = pressureScaled }
         }
         postInvalidateOnAnimation()
     }
@@ -91,16 +93,27 @@ class InkView(context: Context) : View(context) {
             pts.removeAll { now - it.t > MAX_AGE_MS }
             if (!styleKnown || !visibleOnMac || pts.isEmpty()) return
             paint.color = color
-            paint.strokeWidth = maxOf(1.5f, widthNorm * videoWidthPx)
-            path.reset()
-            var stroke = -1
-            for (p in pts) {
-                if (p.stroke != stroke) { path.moveTo(p.x, p.y); path.lineTo(p.x + 0.01f, p.y); stroke = p.stroke }
-                else path.lineTo(p.x, p.y)
+            if (pressureScaled) {
+                // Each piece as thick as the real brush makes it at that pressure.
+                for (i in pts.indices) {
+                    val p = pts[i]
+                    val prev = if (i > 0 && pts[i - 1].stroke == p.stroke) pts[i - 1] else p
+                    paint.strokeWidth = maxOf(1f, widthNorm * (prev.p + p.p) * 0.5f * videoWidthPx)
+                    canvas.drawLine(prev.x, prev.y, if (prev === p) p.x + 0.01f else p.x, p.y, paint)
+                }
+                path.reset()
+            } else {
+                paint.strokeWidth = maxOf(1.5f, widthNorm * videoWidthPx)
+                path.reset()
+                var stroke = -1
+                for (p in pts) {
+                    if (p.stroke != stroke) { path.moveTo(p.x, p.y); path.lineTo(p.x + 0.01f, p.y); stroke = p.stroke }
+                    else path.lineTo(p.x, p.y)
+                }
             }
             more = true
         }
-        canvas.drawPath(path, paint)
+        if (!path.isEmpty) canvas.drawPath(path, paint)
         if (more) postInvalidateDelayed(50) // let the safety net run even if nothing else happens
     }
 

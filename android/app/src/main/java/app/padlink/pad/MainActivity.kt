@@ -146,7 +146,8 @@ class MainActivity : Activity(), PadServer.Listener {
 
     override fun onInk(seq: Long) = streamView.confirmInk(seq)
 
-    override fun onInkStyle(color: Int, width: Float, visible: Boolean) = streamView.setInkStyle(color, width, visible)
+    override fun onInkStyle(color: Int, width: Float, visible: Boolean, pressureScaled: Boolean) =
+        streamView.setInkStyle(color, width, visible, pressureScaled)
 
     override fun onDisconnected(reason: String?) {
         streamView.udp?.close()

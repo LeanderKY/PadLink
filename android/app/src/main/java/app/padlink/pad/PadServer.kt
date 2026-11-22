@@ -50,7 +50,7 @@ class PadServer(private val context: Context, private val serviceName: String) {
         /** The Mac's screen already shows every pen sample up to [seq]. */
         fun onInk(seq: Long)
         /** What the stroke looks like on the Mac (colour, width as fraction of the picture width). */
-        fun onInkStyle(color: Int, width: Float, visible: Boolean)
+        fun onInkStyle(color: Int, width: Float, visible: Boolean, pressureScaled: Boolean)
         fun onDisconnected(reason: String?)
     }
 
@@ -163,7 +163,8 @@ class PadServer(private val context: Context, private val serviceName: String) {
                         val r = bb.get().toInt() and 0xFF; val g = bb.get().toInt() and 0xFF; val b = bb.get().toInt() and 0xFF
                         val w = bb.float
                         val visible = bb.get().toInt() == 1
-                        listener?.onInkStyle(android.graphics.Color.rgb(r, g, b), w, visible)
+                        val pressureScaled = len >= 9 && bb.get().toInt() == 1
+                        listener?.onInkStyle(android.graphics.Color.rgb(r, g, b), w, visible, pressureScaled)
                     }
                     Msg.PING -> send(Msg.PONG, buf.copyOf(len))
                     Msg.BYE -> { reason = null; break }
