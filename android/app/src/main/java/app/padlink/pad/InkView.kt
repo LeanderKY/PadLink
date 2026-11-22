@@ -98,12 +98,12 @@ class InkView(context: Context) : View(context) {
                 for (i in pts.indices) {
                     val p = pts[i]
                     val prev = if (i > 0 && pts[i - 1].stroke == p.stroke) pts[i - 1] else p
-                    paint.strokeWidth = maxOf(1f, widthNorm * (prev.p + p.p) * 0.5f * videoWidthPx)
+                    paint.strokeWidth = (widthNorm * (prev.p + p.p) * 0.5f).coerceIn(0f, MAX_WIDTH) * videoWidthPx + 1f
                     canvas.drawLine(prev.x, prev.y, if (prev === p) p.x + 0.01f else p.x, p.y, paint)
                 }
                 path.reset()
             } else {
-                paint.strokeWidth = maxOf(1.5f, widthNorm * videoWidthPx)
+                paint.strokeWidth = maxOf(1.5f, widthNorm.coerceAtMost(MAX_WIDTH) * videoWidthPx)
                 path.reset()
                 var stroke = -1
                 for (p in pts) {
@@ -119,5 +119,7 @@ class InkView(context: Context) : View(context) {
 
     companion object {
         private const val MAX_AGE_MS = 700L
+        /** Never draw local ink thicker than this share of the picture width (safety net). */
+        private const val MAX_WIDTH = 0.035f
     }
 }

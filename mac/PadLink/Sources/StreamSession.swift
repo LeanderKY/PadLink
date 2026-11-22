@@ -63,9 +63,7 @@ final class StreamSession {
     // Local ink on the pad (see Ink.swift). inkFifo: inkSeq of each frame in the encoder, guarded by flowLock.
     private let ink = InkTracker()
     private var inkFifo: [UInt32] = []
-    private var lastStyle: InkStyle?          // capture queue
-    private var lastStyleNs: UInt64 = 0       // capture queue
-    private var pressureFit = PressureFit()   // capture queue
+    private var inkJudge = InkJudge()         // capture queue
     private var inkTimer: DispatchSourceTimer?
 
     // Pen over UDP (Wi‑Fi only): no TCP head-of-line stalls when a packet is lost. Samples also come over
@@ -329,6 +327,7 @@ final class StreamSession {
 
     /// Capture queue: encode only if the pad keeps up, otherwise remember that a newer picture exists.
     private func offer(_ pb: CVPixelBuffer, _ pts: CMTime, _ captureNs: UInt64) {
+        if let f = ink.freshSample(at: captureNs), let c = InkStyle.color(pb, x: f.x, y: f.y) { ink.setBackground(seq: f.seq, c) }
         measureInk(pb, captureNs)
         let inkSeq = ink.confirmedSeq(at: captureNs)
         flowLock.lock()
@@ -347,12 +346,7 @@ final class StreamSession {
 
     /// Capture queue: tell the pad what the stroke looks like, so its instant ink matches the real brush.
     private func measureInk(_ pb: CVPixelBuffer, _ captureNs: UInt64) {
-        guard captureNs &- lastStyleNs > 80_000_000, let p = ink.probePoint(at: captureNs),
-              let measured = InkStyle.measure(pb, x: p.x, y: p.y) else { return }
-        let st = pressureFit.add(measured, pressure: p.pressure)
-        lastStyleNs = captureNs
-        if let old = lastStyle, !st.differs(from: old) { return }
-        lastStyle = st
+        guard let st = inkJudge.judge(pb, captureNs, ink) else { return }
         conn.queue.async { [self] in if !ended { conn.send(.inkStyle, st.payload()) } }
     }
 
