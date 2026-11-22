@@ -3,11 +3,14 @@ import SwiftUI
 @main
 struct PadLinkApp: App {
     @StateObject private var model = AppModel()
+    @StateObject private var updater = Updater()
 
     var body: some Scene {
         Window("PadLink", id: "main") {
             ContentView()
                 .environmentObject(model)
+                .environmentObject(updater)
+                .task { updater.start() }
         }
         .windowResizability(.contentSize)
         .windowStyle(.hiddenTitleBar)

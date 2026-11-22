@@ -63,6 +63,8 @@ struct MainView: View {
 
     private var footer: some View {
         VStack(spacing: 14) {
+            UpdateBar()
+
             Picker("", selection: $model.mode) {
                 ForEach(DisplayMode.allCases) { Text($0.title).tag($0) }
             }
@@ -350,5 +352,34 @@ struct CableDetails: View {
             }
         }
         .padding(.top, 4)
+    }
+}
+
+/// "Update available" — installs the new version from GitHub in place (see Updater for why not via browser).
+struct UpdateBar: View {
+    @EnvironmentObject var updater: Updater
+    @EnvironmentObject var model: AppModel
+
+    var body: some View {
+        if let v = updater.available {
+            HStack(spacing: 10) {
+                Image(systemName: "arrow.down.circle.fill").foregroundStyle(.tint)
+                Text("PadLink \(v) ist da").font(.system(size: 12, weight: .medium))
+                Spacer()
+                if updater.working {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Jetzt aktualisieren") { updater.install() }
+                        .controlSize(.small)
+                        .disabled(model.isActive)
+                        .help(model.isActive ? "Erst trennen, dann aktualisieren" : "")
+                }
+            }
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.1)))
+        }
+        if let p = updater.problem {
+            Text(p).font(.system(size: 11)).foregroundStyle(.red).multilineTextAlignment(.center)
+        }
     }
 }
