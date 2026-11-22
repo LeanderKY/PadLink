@@ -33,20 +33,29 @@ enum UsbScanner {
     }
 
     /// Blocking (call off the main thread). Returns interface 0 of the pad in accessory mode, or nil if
-    /// no pad is on the cable.
-    static func findPad(wait: TimeInterval = 6) -> io_service_t? {
-        if let i = accessoryInterface() { return i }
-        let candidates = devices().filter(looksLikeAndroid)
-        guard !candidates.isEmpty else { return nil }
+    /// no pad is on the cable. `kick`: the pad is already in accessory mode but didn't answer — ask it to
+    /// switch again, which makes Android drop the old accessory connection and open PadLink afresh.
+    static func findPad(wait: TimeInterval = 8, kick: Bool = false) -> io_service_t? {
+        let ds = devices()
+        defer { ds.forEach { IOObjectRelease($0.service) } }
+        if let acc = ds.first(where: { $0.isAccessory }) {
+            guard kick, switchToAccessory(acc) else { return firstInterface(of: acc.entryID) }
+            return waitForAccessory(excluding: acc.entryID, wait: wait)
+        }
         var switched = false
-        for d in candidates where switchToAccessory(d) { switched = true }
-        defer { candidates.forEach { IOObjectRelease($0.service) } }
-        guard switched else { return nil }
-        // The pad disconnects and comes back as a Google accessory device.
+        for d in ds where looksLikeAndroid(d) && switchToAccessory(d) { switched = true }
+        return switched ? waitForAccessory(excluding: nil, wait: wait) : nil
+    }
+
+    /// The pad disconnects and comes back as a Google accessory device (a new registry entry).
+    private static func waitForAccessory(excluding old: UInt64?, wait: TimeInterval) -> io_service_t? {
         let deadline = Date().addingTimeInterval(wait)
         while Date() < deadline {
             Thread.sleep(forTimeInterval: 0.15)
-            if let i = accessoryInterface() { return i }
+            let ds = devices()
+            defer { ds.forEach { IOObjectRelease($0.service) } }
+            if let acc = ds.first(where: { $0.isAccessory && $0.entryID != old }),
+               let i = firstInterface(of: acc.entryID) { return i }
         }
         return nil
     }
@@ -62,9 +71,12 @@ enum UsbScanner {
         let ds = devices()
         defer { ds.forEach { IOObjectRelease($0.service) } }
         guard let acc = ds.first(where: { $0.isAccessory }) else { return nil }
-        let ifs = interfaces(of: acc.entryID)
+        return firstInterface(of: acc.entryID)
+    }
+
+    private static func firstInterface(of entryID: UInt64) -> io_service_t? {
         var result: io_service_t?
-        for i in ifs {
+        for i in interfaces(of: entryID) {
             if result == nil && i.number == 0 { result = i.service } else { IOObjectRelease(i.service) }
         }
         return result
@@ -115,12 +127,14 @@ enum UsbScanner {
     /// keyboards, mice or audio gear.
     static func looksLikeAndroid(_ d: Device) -> Bool {
         if d.isAccessory || d.vid == 0x05AC || d.vid == 0 { return false }
+        let ifs = interfacesSummary(d)
         let n = d.name.lowercased()
-        if ["android", "wacom", "movink", "dtha"].contains(where: n.contains) {
-            // Wacom also makes plain pen tablets (HID only) — require a non-HID interface.
-            return interfacesSummary(d).contains { $0.cls == 0xFF || $0.cls == 6 }
+        if d.vid == 0x056A || ["android", "wacom", "movink", "dtha"].contains(where: n.contains) {
+            // Wacom also makes plain pen tablets (HID only). The pad in "charging only" mode may show no
+            // interfaces at all — still worth asking (an AOA request to a non-Android device just fails).
+            return ifs.isEmpty || ifs.contains { $0.cls != 3 }
         }
-        return interfacesSummary(d).contains { ($0.cls == 0xFF && ($0.sub == 0x42 || $0.name.uppercased().contains("MTP"))) || $0.cls == 6 }
+        return ifs.contains { ($0.cls == 0xFF && ($0.sub == 0x42 || $0.name.uppercased().contains("MTP"))) || $0.cls == 6 }
     }
 
     private static func interfacesSummary(_ d: Device) -> [Interface] {
@@ -207,6 +221,7 @@ final class UsbConnection: PadTransport {
     private let writeQueue = DispatchQueue(label: "padlink.usb.write", qos: .userInteractive)
     private var parser = FrameParser()
     private var closed = false
+    private var gotData = false
 
     /// Android's accessory driver reads in 16 KB transfers; never send more per transfer.
     private static let chunk = 16 * 1024
@@ -260,8 +275,13 @@ final class UsbConnection: PadTransport {
     }
 
     func close() {
-        guard !closed else { return }
-        send(.bye, Data()) { [weak self] in self?.queue.async { self?.finish(nil) } }
+        queue.async { [self] in
+            guard !closed else { return }
+            // Nobody on the other end yet (PadLink on the pad not open): a write would block — just let go.
+            guard gotData else { return finish(nil) }
+            send(.bye, Data()) { [weak self] in self?.queue.async { self?.finish(nil) } }
+            queue.asyncAfter(deadline: .now() + 1.5) { [weak self] in self?.finish(nil) }
+        }
     }
 
     private func readLoop() {
@@ -278,6 +298,7 @@ final class UsbConnection: PadTransport {
                 let d = Data(bytes: buf.bytes, count: n)
                 queue.async { [weak self] in
                     guard let self, !self.closed else { return }
+                    self.gotData = true
                     for (t, p) in self.parser.feed(d) { self.onMessage?(t, p) }
                 }
             }
@@ -313,5 +334,54 @@ final class UsbConnection: PadTransport {
             throw NSError(domain: "PadLink", code: 10, userInfo: [NSLocalizedDescriptionKey: "keine USB-Datenleitung gefunden"])
         }
         return (a, b)
+    }
+}
+
+/// Tells the app when the pad gets plugged in (or unplugged), without polling.
+final class UsbWatcher {
+    var onPadPlugged: (() -> Void)?
+    private var port: IONotificationPortRef?
+    private var iters: [io_iterator_t] = []
+    private var plugged = false
+    private var pending: DispatchWorkItem?
+
+    func start() {
+        guard port == nil, let p = IONotificationPortCreate(kIOMainPortDefault) else { return }
+        port = p
+        IONotificationPortSetDispatchQueue(p, .main)
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        for type in [kIOFirstMatchNotification, kIOTerminatedNotification] {
+            var it: io_iterator_t = 0
+            let cb: IOServiceMatchingCallback = { ctx, it in
+                while case let s = IOIteratorNext(it), s != 0 { IOObjectRelease(s) }
+                Unmanaged<UsbWatcher>.fromOpaque(ctx!).takeUnretainedValue().recheck()
+            }
+            if IOServiceAddMatchingNotification(p, type, IOServiceMatching("IOUSBHostDevice"), cb, me, &it) == KERN_SUCCESS {
+                while case let s = IOIteratorNext(it), s != 0 { IOObjectRelease(s) } // arm
+                iters.append(it)
+            }
+        }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let now = UsbScanner.padPluggedIn()
+            DispatchQueue.main.async { self?.plugged = now }
+        }
+    }
+
+    /// Interfaces show up a moment after the device itself — look once things have settled.
+    private func recheck() {
+        pending?.cancel()
+        let w = DispatchWorkItem { [weak self] in
+            DispatchQueue.global(qos: .utility).async {
+                let now = UsbScanner.padPluggedIn()
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    let was = self.plugged
+                    self.plugged = now
+                    if now && !was { self.onPadPlugged?() }
+                }
+            }
+        }
+        pending = w
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: w)
     }
 }

@@ -42,6 +42,14 @@ final class AppModel: ObservableObject {
     private var searchTimeout: Task<Void, Never>?
     private var permissionPoll: Timer?
     private var connectingTo: String?
+    private let usbWatcher = UsbWatcher()
+    /// Cable: how often we've already re-tried this connect, whether the USB scan is running, and whether the
+    /// current session ever got a picture going (a cable session that never started gets retried).
+    private var cableTries = 0
+    private var usbScanning = false
+    private var sessionStreamed = false
+    private var attempt = 0
+    private var cableWatchdog: Task<Void, Never>?
 
     private let macId: String = {
         if let id = UserDefaults.standard.string(forKey: "macId") { return id }
@@ -58,6 +66,8 @@ final class AppModel: ObservableObject {
         startPermissionPolling()
         KeyMap.shared.prepare() // keyboard-layout lookup must happen on the main thread
         FrontApp.shared.prepare()
+        usbWatcher.onPadPlugged = { [weak self] in self?.padPlugged() }
+        usbWatcher.start()
     }
 
     var permissionsOK: Bool { hasScreenAccess && hasInputAccess }
@@ -74,12 +84,62 @@ final class AppModel: ObservableObject {
 
     func connect() {
         guard permissionsOK else { return }
+        attempt += 1
+        cableTries = 0
         phase = .searching
-        // Cable first: if the pad is plugged in, use USB (lowest latency). Otherwise Wi‑Fi.
+        tryCable(kick: false)
+    }
+
+    /// Cable first: if the pad is plugged in, use USB (lowest latency). Otherwise Wi‑Fi.
+    private func tryCable(kick: Bool) {
+        let my = attempt
+        usbScanning = true
         Task {
-            let usb = await Task.detached(priority: .userInitiated) { UsbScanner.findPad() }.value
-            guard phase == .searching else { if let usb { IOObjectRelease(usb) }; return }
-            if let usb { openUSB(usb) } else { searchWifi() }
+            let usb = await Task.detached(priority: .userInitiated) { UsbScanner.findPad(kick: kick) }.value
+            usbScanning = false
+            guard my == attempt, phase == .searching || isCableConnecting else { if let usb { IOObjectRelease(usb) }; return }
+            if let usb { openUSB(usb) }
+            else if kick { phase = .problem(Self.cableStuck) }
+            else { phase = .searching; searchWifi() }
+        }
+    }
+
+    private static let cableStuck = "Das Pad am Kabel antwortet nicht.\nPad entsperren, PadLink darauf öffnen – dann nochmal drücken."
+
+    private var isCableConnecting: Bool {
+        if case .connecting = phase { return viaCable }
+        return false
+    }
+
+    /// The pad didn't answer over the cable (PadLink on it still starting, screen locked, an old connection
+    /// stuck …): let go, make the pad re-open its accessory side, try again. Twice, then say what to do.
+    private func retryCable() {
+        cableWatchdog?.cancel()
+        session?.stop()
+        session = nil
+        guard cableTries < 2 else { phase = .problem(Self.cableStuck); return }
+        cableTries += 1
+        phase = .connecting("Pad am Kabel – warte auf PadLink …")
+        let my = attempt
+        Task {
+            try? await Task.sleep(nanoseconds: 800_000_000)
+            guard my == attempt, isCableConnecting else { return }
+            tryCable(kick: true)
+        }
+    }
+
+    /// Cable plugged in while PadLink is open: just connect (or switch from Wi‑Fi to the cable).
+    private func padPlugged() {
+        guard !usbScanning else { return }
+        switch phase {
+        case .idle, .problem, .choosePad, .searching:
+            searchTimeout?.cancel()
+            browser.stop()
+            connect()
+        case .connecting, .waitingForApproval, .streaming:
+            guard !viaCable else { return }
+            disconnect()
+            connect()
         }
     }
 
@@ -96,6 +156,8 @@ final class AppModel: ObservableObject {
     }
 
     func disconnect() {
+        attempt += 1
+        cableWatchdog?.cancel()
         searchTimeout?.cancel()
         browser.stop()
         session?.stop()
@@ -126,8 +188,17 @@ final class AppModel: ObservableObject {
     private func openUSB(_ interfaceService: io_service_t) {
         viaCable = true
         connectingTo = nil
-        phase = .connecting("Pad am Kabel")
+        if case .connecting = phase {} else { phase = .connecting("Pad am Kabel") }
         startSession(UsbConnection(interfaceService: interfaceService), name: nil)
+        // No answer from the pad within a few seconds → retry (see retryCable).
+        let s = session
+        cableWatchdog?.cancel()
+        cableWatchdog = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            guard let self, !Task.isCancelled, self.session === s, s != nil, !self.sessionStreamed else { return }
+            if case .waitingForApproval = self.phase { return }
+            self.retryCable()
+        }
     }
 
     private func open(_ name: String) {
@@ -144,6 +215,7 @@ final class AppModel: ObservableObject {
         let s = StreamSession(transport: transport, mode: mode, quality: quality, macId: macId,
                               macName: Host.current().localizedName ?? "Mac", token: name.flatMap { tokens[$0] })
         s.onEvent = { [weak self] e in self?.handle(e, from: s) }
+        sessionStreamed = false
         session = s
         s.start()
     }
@@ -159,12 +231,16 @@ final class AppModel: ObservableObject {
                 pairedPad = name
             }
         case .streaming(let padName):
+            sessionStreamed = true
+            cableWatchdog?.cancel()
             phase = .streaming(padName)
             if pauseAirDrop && !viaCable { Task { _ = await AirDropPause.pause() } }
         case .stats(let rtt, let fps):
             latencyMs = rtt
             self.fps = fps
         case .ended(let reason):
+            if viaCable && !sessionStreamed && reason != nil { return retryCable() }
+            cableWatchdog?.cancel()
             AirDropPause.resume()
             session = nil
             if let reason { phase = .problem(reason) } else if isActive { phase = .idle }

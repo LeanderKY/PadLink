@@ -24,12 +24,23 @@ class UsbLink(private val activity: Activity, private val server: PadServer) {
     private val usb = activity.getSystemService(UsbManager::class.java)
     private var pfd: ParcelFileDescriptor? = null
     private var receiverRegistered = false
+    /** Asked Android for permission already (don't pop the dialog again on every check). */
+    private var permissionAsked = false
+    private val poll = object : Runnable {
+        override fun run() {
+            if (!server.hasWifiLink) open(null) // never cut a running Wi‑Fi session
+            activity.window.decorView.postDelayed(this, 1500)
+        }
+    }
 
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(c: Context, i: Intent) {
             when (i.action) {
-                ACTION_PERMISSION -> if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) open(accessoryFrom(i))
-                UsbManager.ACTION_USB_ACCESSORY_DETACHED -> close()
+                ACTION_PERMISSION -> {
+                    permissionAsked = false
+                    if (i.getBooleanExtra(UsbManager.EXTRA_PERMISSION_GRANTED, false)) open(accessoryFrom(i))
+                }
+                UsbManager.ACTION_USB_ACCESSORY_DETACHED -> { permissionAsked = false; close() }
             }
         }
     }
@@ -46,9 +57,14 @@ class UsbLink(private val activity: Activity, private val server: PadServer) {
             receiverRegistered = true
         }
         open(null)
+        // The "cable plugged in" message from Android doesn't always reach us (app already open, chooser
+        // dialog, screen was locked …). Look for the Mac's accessory ourselves every 1.5 s — cheap.
+        activity.window.decorView.removeCallbacks(poll)
+        activity.window.decorView.postDelayed(poll, 1500)
     }
 
     fun stop() {
+        activity.window.decorView.removeCallbacks(poll)
         if (receiverRegistered) { runCatching { activity.unregisterReceiver(receiver) }; receiverRegistered = false }
     }
 
@@ -57,6 +73,8 @@ class UsbLink(private val activity: Activity, private val server: PadServer) {
         if (pfd != null) return
         val acc = fromIntent ?: usb.accessoryList?.firstOrNull { it.manufacturer == "PadLink" } ?: return
         if (!usb.hasPermission(acc)) {
+            if (permissionAsked) return
+            permissionAsked = true
             val pi = PendingIntent.getBroadcast(
                 activity, 0, Intent(ACTION_PERMISSION).setPackage(activity.packageName),
                 PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

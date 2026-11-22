@@ -17,6 +17,12 @@ final class InputInjector {
     private var lastEndWasEraser = false
     private var switchedToEraser = false
 
+    /// Our own IDs for the "virtual tablet", so nothing mixes it up with a real Wacom tablet plugged into the
+    /// same Mac (both report Wacom's vendor ID; a shared device ID made apps ignore one of them).
+    private static let deviceID: Int64 = 0x5AD1
+    private static let tabletID: Int64 = 0x5AD
+    private static let penSerial: Int64 = 0x50AD_1001
+
     func setDisplay(_ id: CGDirectDisplayID) { targetDisplay = id }
 
     // MARK: Pen
@@ -106,27 +112,41 @@ final class InputInjector {
         ev.setDoubleValueField(.tabletEventPointPressure, value: Double(pressure))
         ev.setDoubleValueField(.tabletEventTiltX, value: Double(e.tiltX))
         ev.setDoubleValueField(.tabletEventTiltY, value: Double(e.tiltY))
-        ev.setIntegerValueField(.tabletEventDeviceID, value: 1)
+        ev.setIntegerValueField(.tabletEventPointZ, value: 0)
+        ev.setIntegerValueField(.tabletEventDeviceID, value: Self.deviceID)
         ev.setIntegerValueField(.tabletEventPointButtons, value: buttonDown == nil ? 0 : 1)
         ev.post(tap: .cghidEventTap)
     }
 
+    /// The pen entering/leaving the tablet. Posted twice — as a proximity event of its own and as a mouse
+    /// event with the proximity subtype — because apps listen for one or the other (Photoshop reads the pen
+    /// type and pressure capability from these; without them it treats the pen as a mouse).
     private func proximity(_ enter: Bool, eraser: Bool) {
-        guard let ev = CGEvent(source: source) else { return }
-        ev.type = .tabletProximity
-        ev.location = lastPoint
-        ev.setIntegerValueField(.tabletProximityEventVendorID, value: 0x056A)
-        ev.setIntegerValueField(.tabletProximityEventTabletID, value: 1)
-        ev.setIntegerValueField(.tabletProximityEventPointerID, value: 1)
-        ev.setIntegerValueField(.tabletProximityEventDeviceID, value: 1)
-        ev.setIntegerValueField(.tabletProximityEventSystemTabletID, value: 1)
-        ev.setIntegerValueField(.tabletProximityEventVendorPointerType, value: eraser ? 0x080A : 0x0802)
-        ev.setIntegerValueField(.tabletProximityEventVendorPointerSerialNumber, value: 1)
-        // device id | abs x | abs y | buttons | tilt x | tilt y | pressure
-        ev.setIntegerValueField(.tabletProximityEventCapabilityMask, value: 0x05C7)
-        ev.setIntegerValueField(.tabletProximityEventPointerType, value: eraser ? 3 : 1)
-        ev.setIntegerValueField(.tabletProximityEventEnterProximity, value: enter ? 1 : 0)
-        ev.post(tap: .cghidEventTap)
+        func fill(_ ev: CGEvent) {
+            ev.setIntegerValueField(.tabletProximityEventVendorID, value: 0x056A)
+            ev.setIntegerValueField(.tabletProximityEventTabletID, value: Self.tabletID)
+            ev.setIntegerValueField(.tabletProximityEventPointerID, value: eraser ? 2 : 1)
+            ev.setIntegerValueField(.tabletProximityEventDeviceID, value: Self.deviceID)
+            ev.setIntegerValueField(.tabletProximityEventSystemTabletID, value: Self.tabletID)
+            ev.setIntegerValueField(.tabletProximityEventVendorPointerType, value: eraser ? 0x080A : 0x0802)
+            ev.setIntegerValueField(.tabletProximityEventVendorPointerSerialNumber, value: Self.penSerial)
+            ev.setIntegerValueField(.tabletProximityEventVendorUniqueID, value: Self.penSerial)
+            // device id | abs x | abs y | buttons | tilt x | tilt y | pressure
+            ev.setIntegerValueField(.tabletProximityEventCapabilityMask, value: 0x05C7)
+            ev.setIntegerValueField(.tabletProximityEventPointerType, value: eraser ? 3 : 1)
+            ev.setIntegerValueField(.tabletProximityEventEnterProximity, value: enter ? 1 : 0)
+        }
+        if let ev = CGEvent(source: source) {
+            ev.type = .tabletProximity
+            ev.location = lastPoint
+            fill(ev)
+            ev.post(tap: .cghidEventTap)
+        }
+        if let ev = CGEvent(mouseEventSource: source, mouseType: .mouseMoved, mouseCursorPosition: lastPoint, mouseButton: .left) {
+            ev.setIntegerValueField(.mouseEventSubtype, value: Int64(CGEventMouseSubtype.tabletProximity.rawValue))
+            fill(ev)
+            ev.post(tap: .cghidEventTap)
+        }
         inProximity = enter
         currentEraser = eraser
     }

@@ -73,6 +73,8 @@ class PadServer(private val context: Context, private val serviceName: String) {
     val isConnected get() = link != null
     /** True while the current Mac is on the USB cable. */
     val isUsb get() = link?.usb == true
+    /** A Mac is connected over Wi‑Fi right now. */
+    val hasWifiLink get() = link?.let { !it.usb } == true
     /** The Mac's address on Wi‑Fi (for pen datagrams). */
     val remoteAddress get() = link?.remote
 
