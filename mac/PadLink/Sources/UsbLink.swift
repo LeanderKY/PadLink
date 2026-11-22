@@ -35,16 +35,44 @@ enum UsbScanner {
     /// Blocking (call off the main thread). Returns interface 0 of the pad in accessory mode, or nil if
     /// no pad is on the cable. `kick`: the pad is already in accessory mode but didn't answer — ask it to
     /// switch again, which makes Android drop the old accessory connection and open PadLink afresh.
-    static func findPad(wait: TimeInterval = 8, kick: Bool = false) -> io_service_t? {
+    static func findPad(wait: TimeInterval = 30, kick: Bool = false, onSwitched: (() -> Void)? = nil) -> io_service_t? {
+        resetReport()
         let ds = devices()
         defer { ds.forEach { IOObjectRelease($0.service) } }
+        note(ds.isEmpty ? "Keine USB-Geräte sichtbar (Kabel? Mac fragt evtl. „Zubehör erlauben?“)" : "USB-Geräte am Mac:")
+        for d in ds { note("• \(describe(d))") }
         if let acc = ds.first(where: { $0.isAccessory }) {
+            note("Pad ist schon im PadLink-Kabelmodus")
             guard kick, switchToAccessory(acc) else { return firstInterface(of: acc.entryID) }
-            return waitForAccessory(excluding: acc.entryID, wait: wait)
+            onSwitched?()
+            return waitForAccessory(excluding: acc.entryID, wait: min(wait, 15))
         }
         var switched = false
-        for d in ds where looksLikeAndroid(d) && switchToAccessory(d) { switched = true }
-        return switched ? waitForAccessory(excluding: nil, wait: wait) : nil
+        for d in ds where looksLikeAndroid(d) {
+            note("Pad-Kandidat: \(d.name.isEmpty ? "?" : d.name)")
+            if switchToAccessory(d) { switched = true }
+        }
+        if !switched { note(ds.contains(where: looksLikeAndroid) ? "Umschalten hat nicht geklappt" : "Kein Pad unter den USB-Geräten erkannt") }
+        guard switched else { return nil }
+        onSwitched?()
+        return waitForAccessory(excluding: nil, wait: wait)
+    }
+
+    // MARK: Diagnosis (shown in the app when the cable doesn't work)
+
+    private static let reportLock = NSLock()
+    private static var reportLines: [String] = []
+    static var report: String { reportLock.lock(); defer { reportLock.unlock() }; return reportLines.joined(separator: "\n") }
+    private static func resetReport() { reportLock.lock(); reportLines = []; reportLock.unlock() }
+    static func note(_ s: String) {
+        NSLog("PadLink USB: \(s)")
+        reportLock.lock(); reportLines.append(s); if reportLines.count > 40 { reportLines.removeFirst() }; reportLock.unlock()
+    }
+    private static func describe(_ d: Device) -> String {
+        let ifs = interfaces(of: d.entryID)
+        ifs.forEach { IOObjectRelease($0.service) }
+        let cls = ifs.map { String(format: "%02X/%02X", $0.cls, $0.sub) }.joined(separator: " ")
+        return String(format: "%@ [%04X:%04X] %@", d.name.isEmpty ? "(ohne Namen)" : d.name, d.vid, d.pid, ifs.isEmpty ? "keine Schnittstellen" : cls)
     }
 
     /// The pad disconnects and comes back as a Google accessory device (a new registry entry).
@@ -55,8 +83,9 @@ enum UsbScanner {
             let ds = devices()
             defer { ds.forEach { IOObjectRelease($0.service) } }
             if let acc = ds.first(where: { $0.isAccessory && $0.entryID != old }),
-               let i = firstInterface(of: acc.entryID) { return i }
+               let i = firstInterface(of: acc.entryID) { note("Pad im Kabelmodus wieder da"); return i }
         }
+        note("Pad kam nach dem Umschalten nicht zurück (\(Int(wait)) s) – am Mac „Zubehör erlauben“ bestätigt?")
         return nil
     }
 
@@ -160,7 +189,7 @@ enum UsbScanner {
                 IOObjectRelease(i.service)
             }
         }
-        guard let obj = objects.first else { NSLog("PadLink USB: cannot open \(d.name)"); return false }
+        guard let obj = objects.first else { note("Kann \(d.name) nicht öffnen (macOS lässt keinen Zugriff zu)"); return false }
         defer { obj.destroy() }
 
         // 1. Does it speak AOA?
@@ -169,11 +198,11 @@ enum UsbScanner {
         do {
             try obj.__send(request(0xC0, AOA.getProtocol, length: 2), data: ver, bytesTransferred: &n, completionTimeout: 1)
         } catch {
-            NSLog("PadLink USB: \(d.name) is not an Android accessory host target (\(error.localizedDescription))")
+            note("\(d.name) antwortet nicht auf die Kabelmodus-Anfrage (\(error.localizedDescription))")
             return false
         }
         let protocolVersion = Int(ver.bytes.load(as: UInt16.self).littleEndian)
-        guard n == 2, protocolVersion >= 1 else { return false }
+        guard n == 2, protocolVersion >= 1 else { note("\(d.name): kein Android-Kabelmodus (Version \(protocolVersion))"); return false }
 
         // 2. Identify ourselves, 3. start.
         do {
@@ -185,10 +214,10 @@ enum UsbScanner {
             }
             try obj.__send(request(0x40, AOA.start, length: 0), data: nil, bytesTransferred: nil, completionTimeout: 1)
         } catch {
-            NSLog("PadLink USB: AOA start failed: \(error.localizedDescription)")
+            note("Umschalten fehlgeschlagen: \(error.localizedDescription)")
             return false
         }
-        NSLog("PadLink USB: switched \(d.name) to accessory mode (AOA v\(protocolVersion))")
+        note("\(d.name) auf Kabelmodus umgeschaltet (AOA v\(protocolVersion))")
         return true
     }
 

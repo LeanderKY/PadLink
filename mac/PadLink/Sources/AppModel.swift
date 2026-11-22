@@ -20,6 +20,8 @@ final class AppModel: ObservableObject {
     @Published var latencyMs: Double = 0
     @Published var fps: Int = 0
     @Published private(set) var viaCable = false
+    /// What the last cable attempt saw, step by step (shown under "Kabel-Details" when something failed).
+    @Published private(set) var cableReport = ""
     /// Opt-in: pause AirDrop's radio (AWDL) while streaming over Wi‑Fi — fewer lag spikes, asks for the password.
     @Published var pauseAirDrop = UserDefaults.standard.bool(forKey: "pauseAirDrop") {
         didSet { UserDefaults.standard.set(pauseAirDrop, forKey: "pauseAirDrop") }
@@ -95,12 +97,21 @@ final class AppModel: ObservableObject {
         let my = attempt
         usbScanning = true
         Task {
-            let usb = await Task.detached(priority: .userInitiated) { UsbScanner.findPad(kick: kick) }.value
+            let usb = await Task.detached(priority: .userInitiated) {
+                UsbScanner.findPad(kick: kick) {
+                    Task { @MainActor [weak self] in
+                        guard let self, my == self.attempt else { return }
+                        self.viaCable = true
+                        self.phase = .connecting("Pad wird verbunden … Falls der Mac fragt: „Erlauben“ klicken.")
+                    }
+                }
+            }.value
             usbScanning = false
+            cableReport = UsbScanner.report
             guard my == attempt, phase == .searching || isCableConnecting else { if let usb { IOObjectRelease(usb) }; return }
             if let usb { openUSB(usb) }
             else if kick { phase = .problem(Self.cableStuck) }
-            else { phase = .searching; searchWifi() }
+            else { viaCable = false; phase = .searching; searchWifi() }
         }
     }
 

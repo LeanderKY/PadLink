@@ -135,6 +135,7 @@ struct StatusText: View {
             case .problem(let msg):
                 title("Hat nicht geklappt")
                 subtitle(msg)
+                if !model.cableReport.isEmpty { CableDetails(text: model.cableReport) }
             }
         }
         .multilineTextAlignment(.center)
@@ -317,5 +318,36 @@ private struct PermissionRow: View {
             }
         }
         .animation(.easeInOut, value: done)
+    }
+}
+
+/// Step-by-step record of the last cable attempt — so a screenshot shows what went wrong on another Mac.
+struct CableDetails: View {
+    let text: String
+    @State private var open = false
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Button(open ? "Kabel-Details ausblenden" : "Kabel-Details") { open.toggle() }
+                .buttonStyle(.link)
+                .font(.system(size: 12))
+            if open {
+                ScrollView {
+                    Text(text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 140)
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.secondary.opacity(0.08)))
+                Button("Kopieren") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                .font(.system(size: 12))
+            }
+        }
+        .padding(.top, 4)
     }
 }
